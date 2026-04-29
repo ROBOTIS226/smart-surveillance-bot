@@ -1,1 +1,11 @@
-# smart-surveillance-bot
+/__pycache__/
+/venv/
+.env
+.DS_Store
+.idea/
+.vscode/
+*.log
+*.pyc
+*.pyo
+*.swp
+*.sqlite3

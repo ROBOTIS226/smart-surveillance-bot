@@ -1,0 +1,103 @@
+# yolo_client.py - To be run on your Laptop (FIXED VERSION)
+import cv2
+import requests
+from ultralytics import YOLO
+import threading
+import time
+
+# --- A new class to handle video streaming in a separate thread ---
+class VideoStreamWidget(object):
+    def __init__(self, src=0):
+        # Initialize the video camera stream
+        self.capture = cv2.VideoCapture(src)
+        if not self.capture.isOpened():
+            print(f"Error: Could not open video stream at {src}")
+            self.capture = None
+            return
+
+        # Start the thread to read frames from the video stream
+        self.thread = threading.Thread(target=self.update, args=())
+        self.thread.daemon = True
+        self.thread.start()
+        
+        # Initialize frame and status variables
+        self.status = False
+        self.frame = None
+
+    def update(self):
+        # Read the next frame from the stream in a different thread
+        while True:
+            if self.capture is not None and self.capture.isOpened():
+                (self.status, self.frame) = self.capture.read()
+            time.sleep(0.01) # Small delay to prevent CPU overuse
+
+    def read(self):
+        # Return the latest frame
+        return self.frame
+
+    def stop(self):
+        # Release the video capture object
+        if self.capture is not None:
+            self.capture.release()
+
+# --- Configuration ---
+# PI_IP_ADDRESS = "192.168.60.44" 
+PI_IP_ADDRESS = "10.131.67.44" 
+VIDEO_URL = f"http://{PI_IP_ADDRESS}:5000/video_feed"
+REPORT_URL = f"http://{PI_IP_ADDRESS}:5000/report"
+
+# Load a pre-trained YOLOv8 model
+model = YOLO('yolo11n.pt')
+
+# --- Main application logic ---
+# Use our new threaded video stream class
+video_stream = VideoStreamWidget(VIDEO_URL)
+time.sleep(2.0) # Allow the stream to start and buffer a bit
+
+if video_stream.capture is None:
+    print("Could not connect to stream. Exiting.")
+    exit()
+
+print("Connected to stream. Press 'q' to quit.")
+
+while True:
+    # Grab the latest frame from the threaded widget
+    frame = video_stream.read()
+
+    # If the frame is not available, skip the loop
+    if frame is None:
+        print("Waiting for frame...")
+        time.sleep(0.1)
+        continue
+
+    # Run YOLO detection on the frame
+    results = model(frame, verbose=False) 
+
+    # Extract the names of detected objects
+    detected_objects = []
+    for result in results:
+        for cls_id in result.boxes.cls:
+            detected_objects.append(result.names[int(cls_id)])
+
+    # Send the list of unique detected objects back to the Pi
+    if detected_objects:
+        try:
+            unique_objects = list(set(detected_objects))
+            requests.post(REPORT_URL, json={"objects": unique_objects}, timeout=0.5)
+        except requests.exceptions.RequestException:
+            # Silently fail if the Pi is not reachable to avoid console spam
+            pass
+
+    # Display the frame with detection boxes on your laptop
+    annotated_frame = results[0].plot()
+    cv2.imshow("YOLO Detection", annotated_frame)
+
+    # Exit the loop if the 'q' key is pressed
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Clean up
+video_stream.stop()
+cv2.destroyAllWindows()
+print("Streaming and detection stopped.")
+
